@@ -39,7 +39,7 @@ mainWithConfigAndBehavior :: Config -> Behavior -> IO ()
 mainWithConfigAndBehavior conf bev = bracket (connect conf bev) disconnect loop
   where
     disconnect = hClose . socket
-    loop st    = runReaderT run st
+    loop       = runReaderT run
 
 main :: IO ()
 main = mainWithConfigAndBehavior (Config
@@ -47,8 +47,8 @@ main = mainWithConfigAndBehavior (Config
                                   6667
                                   "#yunbot-testing"
                                   "yunbot") $ do
-         "!echo " |! (\x -> return $ drop 6 x)
-         "!reverse " |! (\x -> return $ reverse $ drop 9 x)
+         "!echo " |! return . drop 6
+         "!reverse " |! return . reverse . drop 9
 --
 -- Connect to the server and return the initial bot state
 --
@@ -58,10 +58,9 @@ connect conf bev = notify $ do
     hSetBuffering h NoBuffering
     return (Bot (runBevhavior bev) conf h)
   where
-    notify a = bracket_
+    notify = bracket_
         (printf "Connecting to %s ... " (server conf) >> hFlush stdout)
         (putStrLn "done.")
-        a
 
 --
 -- We're in the Net monad now, so we've connected successfully
@@ -84,7 +83,6 @@ listen h = forever $ do
     io (putStrLn s)
     if ping s then pong s else eval (clean s)
   where
-    forever a = a >> forever a
     clean     = drop 1 . dropWhile (/= ':') . drop 1
     ping x    = "PING :" `isPrefixOf` x
     pong x    = write "PONG" (':' : drop 6 x)
@@ -95,10 +93,10 @@ listen h = forever $ do
 eval :: String -> Net ()
 eval s = do
     r <- asks rules
-    (liftAction (findAction s r)) s
+    liftAction (findAction s r) s
 
 findAction :: String -> [Rule] -> Action
-findAction s l = maybe doNothing (\r -> action r) $ find (\x -> pattern x `isPrefixOf` s) l
+findAction s l = maybe doNothing action $ find (\x -> pattern x `isPrefixOf` s) l
                  where doNothing _ = return ""
 
 --
@@ -107,7 +105,7 @@ findAction s l = maybe doNothing (\r -> action r) $ find (\x -> pattern x `isPre
 privmsg :: String -> Net ()
 privmsg s = do
   conf <- asks config
-  write "PRIVMSG" ((chan conf) ++ " :" ++ s)
+  write "PRIVMSG" (chan conf ++ " :" ++ s)
 
 --
 -- Send a message out to the server we're currently connected to
