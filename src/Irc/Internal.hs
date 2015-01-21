@@ -4,25 +4,27 @@
 module Irc.Internal where
 import Data.String ( IsString(..) )
 import Data.Default ( Default(..) )
-import Data.Maybe ( maybe )
 import Data.Monoid ( Monoid(mempty, mappend) )
 import Control.Applicative (Applicative)
 import Control.Monad.Trans.State as State
-        ( State, put, modify, execState )
-import Data.List (find, length, isPrefixOf)
+        ( State, modify, execState )
+import Data.List (find, isPrefixOf)
 import Network
 import System.IO
-import System.Exit
 import Control.Monad.Reader
 import Control.Exception
 import Text.Printf
-import Prelude hiding (catch)
+
+-- $setup
+-- >>> :set -XOverloadedStrings
+-- >>>
 
 --
--- The 'Net' monad, a wrapper over IO, carrying the bot's immutable state.
--- A socket and the bot's start time.
+-- The Irc monad is an IO monad wrapped by a readerT, which
+-- contains the bot's immutable state (Rule, socket connection,
+-- and config)
 --
-type Net = ReaderT Bot IO
+type Irc = ReaderT Bot IO
 data Bot = Bot { rules :: [Rule]
                , config :: Config
                , socket :: Handle}
@@ -63,10 +65,10 @@ connect conf bev = notify $ do
         (putStrLn "done.")
 
 --
--- We're in the Net monad now, so we've connected successfully
+-- We're in the Irc monad now, so we've connected successfully
 -- Join a channel, and start processing commands
 --
-run :: Net ()
+run :: Irc ()
 run = do
     conf <- asks config
     write "NICK" $ nick conf
@@ -77,7 +79,7 @@ run = do
 --
 -- Process each line from the server
 --
-listen :: Handle -> Net ()
+listen :: Handle -> Irc ()
 listen h = forever $ do
     s <- init `fmap` io (hGetLine h)
     io (putStrLn s)
@@ -90,7 +92,7 @@ listen h = forever $ do
 --
 -- Dispatch a command
 --
-eval :: String -> Net ()
+eval :: String -> Irc ()
 eval s = do
     r <- asks rules
     liftAction (findAction s r) s
@@ -102,7 +104,7 @@ findAction s l = maybe doNothing action $ find (\x -> pattern x `isPrefixOf` s) 
 --
 -- Send a privmsg to the current chan + server
 --
-privmsg :: String -> Net ()
+privmsg :: String -> Irc ()
 privmsg s = do
   conf <- asks config
   write "PRIVMSG" (chan conf ++ " :" ++ s)
@@ -110,7 +112,7 @@ privmsg s = do
 --
 -- Send a message out to the server we're currently connected to
 --
-write :: String -> String -> Net ()
+write :: String -> String -> Irc ()
 write s t = do
     h <- asks socket
     io $ hPrintf h "%s %s\r\n" s t
@@ -119,7 +121,7 @@ write s t = do
 --
 -- Convenience.
 --
-io :: IO a -> Net a
+io :: IO a -> Irc a
 io = liftIO
 
 type Pattern = String
@@ -140,7 +142,7 @@ instance Default Rule where
 instance IsString Rule where
   fromString x = def { pattern = x}
 
-liftAction :: Action -> String -> Net ()
+liftAction :: Action -> String -> Irc ()
 liftAction a s = do
     h <- asks socket
     conf <- asks config
@@ -166,6 +168,9 @@ instance Monoid a => Monoid (BehaviorM a) where
 instance IsString Behavior where
   fromString = addRule . fromString
 
+instance Show Behavior where
+    show = show . map pattern . runBevhavior
+
 runBevhavior :: Behavior -> [Rule]
 runBevhavior bev = execState (unBehaviorM bev) []
 
@@ -176,12 +181,20 @@ modHeadRule :: Behavior -> (Rule -> Rule) -> Behavior
 modHeadRule bev f = do
   let rs = runBevhavior bev
   BehaviorM $ case rs of
-                x:_ -> modify (f x:)
+                x:_ -> modify (reverse.(f x:).reverse)
+                []  -> modify id
 
 ruleAddAction :: Action -> Rule -> Rule
 ruleAddAction f r = r {action = f}
 
 infixl 8 |!
 
+-- | (|!) is a infix API to add a rule to a Behavior monad
+--
+-- >>> "pattern1" |! return >> "pattern2" |! return
+-- ["pattern1","pattern2"]
+--
+-- >>> "pattern1" |! return >> "pattern2" |! return >> "pattern3" |! return
+-- ["pattern1","pattern2","pattern3"]
 (|!) :: Behavior -> (String -> IO String) -> Behavior
 bev |! f = modHeadRule bev $ ruleAddAction f
