@@ -2,13 +2,16 @@
 -- see http://haskell.org/cabal/users-guide/
 
 name:                Irc
-version:             0.1.0.1
--- synopsis:
--- description:
+version:             0.1.0.2
+synopsis:            DSL for IRC bots
+description:
+ Irc is a monadic DSL and library for writing Irc bots.
+ It conveniently utilizes 'do' notation in the style similar to Shake
 license:             GPL-2
 license-file:        LICENSE
 author:              Yunxing Dai
 maintainer:          yunxing@cloudwalk.me
+homepage:            https://github.com/yunxing/Irc
 -- copyright:
 category:            Network
 build-type:          Simple
