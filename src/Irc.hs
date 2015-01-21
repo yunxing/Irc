@@ -2,7 +2,6 @@
 --   It conveniently utilizes 'do' notation in the style of
 --   <https://hackage.haskell.org/package/shake Shake>
 --
-
 module Irc
     ( Behavior
     , BehaviorM

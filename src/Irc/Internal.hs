@@ -4,38 +4,62 @@
 module Irc.Internal where
 import Data.String ( IsString(..) )
 import Data.Default ( Default(..) )
-import Data.Monoid ( Monoid(mempty, mappend) )
 import Control.Applicative (Applicative)
 import Control.Monad.Trans.State as State
-        ( State, modify, execState )
-import Data.List (find, isPrefixOf)
-import Network
-import System.IO
-import Control.Monad.Reader
+        ( State
+        , modify
+        , execState )
 import Control.Exception
-import Text.Printf
+import Control.Monad.Reader
+import Data.List ( find
+                 , isPrefixOf)
+import Network ( PortID(PortNumber)
+               , connectTo)
+import System.IO ( Handle
+                 , hClose
+                 , hSetBuffering
+                 , BufferMode(..)
+                 , hFlush
+                 , stdout
+                 , hGetLine
+                 )
+import Text.Printf( hPrintf
+                  , printf)
 
 -- $setup
 -- >>> :set -XOverloadedStrings
 -- >>>
 
 --
--- The Irc monad is an IO monad wrapped by a readerT, which
--- contains the bot's immutable state (Rule, socket connection,
--- and config)
+-- | The Irc monad is an IO monad wrapped by a readerT, which
+--   contains the bot's immutable state (Rule, socket connection,
+--   and config)
 --
 type Irc = ReaderT Bot IO
 data Bot = Bot { rules :: [Rule]
                , config :: Config
                , socket :: Handle}
 
+--
+-- | The Config struct represents the Irc configuration
+--
 data Config = Config { server :: String
                      , port :: Integer
                      , chan :: String
                      , nick :: String}
 
 --
--- Set up actions to run on start and end, and run the main loop
+-- | Set up actions to run on start and end, and run the main loop.
+--   as an example:
+--
+--   > main :: IO ()
+--   > main = mainWithConfigAndBehavior (Config
+--   >                                  "irc.freenode.org"
+--   >                                  6667
+--   >                                  "#yunbot-testing"
+--   >                                  "yunbot") $ do
+--   >         "!echo " |! return . drop 6
+--   >         "!reverse " |! return . reverse . drop 9
 --
 mainWithConfigAndBehavior :: Config -> Behavior -> IO ()
 mainWithConfigAndBehavior conf bev = bracket (connect conf bev) disconnect loop
@@ -43,16 +67,8 @@ mainWithConfigAndBehavior conf bev = bracket (connect conf bev) disconnect loop
     disconnect = hClose . socket
     loop       = runReaderT run
 
-main :: IO ()
-main = mainWithConfigAndBehavior (Config
-                                  "irc.freenode.org"
-                                  6667
-                                  "#yunbot-testing"
-                                  "yunbot") $ do
-         "!echo " |! return . drop 6
-         "!reverse " |! return . reverse . drop 9
 --
--- Connect to the server and return the initial bot state
+-- | Connect to the server and return the initial bot state
 --
 connect :: Config -> Behavior -> IO Bot
 connect conf bev = notify $ do
@@ -65,8 +81,8 @@ connect conf bev = notify $ do
         (putStrLn "done.")
 
 --
--- We're in the Irc monad now, so we've connected successfully
--- Join a channel, and start processing commands
+-- | We're in the Irc monad now, so we've connected successfully
+--   Join a channel, and start processing commands
 --
 run :: Irc ()
 run = do
@@ -77,7 +93,7 @@ run = do
     asks socket >>= listen
 
 --
--- Process each line from the server
+-- | Process each line from the server
 --
 listen :: Handle -> Irc ()
 listen h = forever $ do
@@ -90,7 +106,7 @@ listen h = forever $ do
     pong x    = write "PONG" (':' : drop 6 x)
 
 --
--- Dispatch a command
+-- | Dispatch a command
 --
 eval :: String -> Irc ()
 eval s = do
@@ -102,7 +118,7 @@ findAction s l = maybe doNothing action $ find (\x -> pattern x `isPrefixOf` s) 
                  where doNothing _ = return ""
 
 --
--- Send a privmsg to the current chan + server
+-- | Send a privmsg to the current chan + server
 --
 privmsg :: String -> Irc ()
 privmsg s = do
@@ -110,7 +126,7 @@ privmsg s = do
   write "PRIVMSG" (chan conf ++ " :" ++ s)
 
 --
--- Send a message out to the server we're currently connected to
+-- | Send a message out to the server we're currently connected to
 --
 write :: String -> String -> Irc ()
 write s t = do
@@ -119,7 +135,7 @@ write s t = do
     io $ printf    "> %s %s\n" s t
 
 --
--- Convenience.
+-- | Convenience.
 --
 io :: IO a -> Irc a
 io = liftIO
@@ -161,10 +177,6 @@ newtype BehaviorM a = BehaviorM {unBehaviorM :: State [Rule] a}
 
 type Behavior = BehaviorM ()
 
-instance Monoid a => Monoid (BehaviorM a) where
-  mempty = return mempty
-  mappend x y = x >> y
-
 instance IsString Behavior where
   fromString = addRule . fromString
 
@@ -176,7 +188,11 @@ runBevhavior bev = execState (unBehaviorM bev) []
 
 addRule :: Rule -> Behavior
 addRule r = BehaviorM $ modify (r :)
-
+-- | modHeadRule modifies the first rule of a behavior
+--
+-- >>> "pattern" `modHeadRule` (\x -> x {pattern = (reverse.pattern) x})
+-- ["nrettap"]
+--
 modHeadRule :: Behavior -> (Rule -> Rule) -> Behavior
 modHeadRule bev f = do
   let rs = runBevhavior bev
